@@ -1,0 +1,2 @@
+# Includes runtime, testing, linting, and bundled local PostgreSQL dependencies.
+-r requirements-dev.lock

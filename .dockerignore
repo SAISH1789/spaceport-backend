@@ -1,0 +1,11 @@
+.venv
+.env
+__pycache__
+.pytest_cache
+.ruff_cache
+.pgdata
+
+.git
+venv
+seed.json
+.DS_Store

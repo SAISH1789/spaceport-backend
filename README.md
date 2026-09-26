@@ -135,7 +135,7 @@ transaction rollback, and importing/reimporting the supplied dataset.
 - `app/seed.py`: seed import; `app/dev.py`: local development runner.
 - `migrations/`: versioned schema; `tests/`: PostgreSQL integration tests.
 
-Companion frontend: https://github.com/SAISH178/spaceport-frontend
+Companion frontend: https://github.com/SAISH1789/spaceport-frontend
 The React frontend runs separately and calls this API over HTTP. PostgreSQL is accessed only by this backend.
 
 Technical references: [PostgreSQL row locking](https://www.postgresql.org/docs/17/explicit-locking.html),

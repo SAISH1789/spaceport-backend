@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Booking, Ship
 from app.schemas import BookingCreate, Interval
+from app.status import BookingStatus
 
 CENTRAL = ZoneInfo("America/Chicago")
 BUFFER = timedelta(minutes=30)
@@ -41,6 +42,7 @@ def create_booking(session: Session, data: BookingCreate) -> Booking:
         select(Booking.id)
         .where(
             Booking.ship_id == data.ship_id,
+            Booking.status == BookingStatus.CONFIRMED,
             Booking.start_time < end + BUFFER,
             Booking.end_time > start - BUFFER,
         )
@@ -62,6 +64,7 @@ def unavailable_intervals(session: Session, ship_id: int, day: date) -> list[Int
         select(Booking)
         .where(
             Booking.ship_id == ship_id,
+            Booking.status == BookingStatus.CONFIRMED,
             Booking.start_time < closes + BUFFER,
             Booking.end_time > opens - BUFFER,
         )
@@ -76,3 +79,31 @@ def unavailable_intervals(session: Session, ship_id: int, day: date) -> list[Int
         else:
             merged.append(Interval(start_time=start, end_time=end))
     return merged
+
+
+def utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def cancel_booking(session: Session, booking_id: int) -> Booking:
+    # Resolve the ship without caching a Booking object before taking the lock.
+    ship_id = session.scalar(select(Booking.ship_id).where(Booking.id == booking_id))
+    if ship_id is None:
+        raise HTTPException(404, "Booking not found")
+    # Use the same lock order as creation/seed import. Read status AFTER waiting,
+    # so simultaneous cancellations preserve the first cancellation timestamp.
+    session.scalar(select(Ship).where(Ship.id == ship_id).with_for_update())
+    booking = session.scalar(
+        select(Booking).where(Booking.id == booking_id).execution_options(populate_existing=True)
+    )
+    if booking is None:
+        raise HTTPException(404, "Booking not found")
+    if booking.status == BookingStatus.CANCELLED:
+        return booking
+    now = utc_now()
+    if booking.start_time <= now:
+        raise HTTPException(409, "Bookings can only be cancelled before departure")
+    booking.status = BookingStatus.CANCELLED
+    booking.cancelled_at = now
+    session.flush()
+    return booking

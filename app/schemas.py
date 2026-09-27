@@ -1,7 +1,9 @@
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_serializer, field_validator
 from pydantic.alias_generators import to_camel
+
+from app.status import BookingStatus
 
 
 class APIModel(BaseModel):
@@ -34,6 +36,12 @@ class BookingOut(APIModel):
     pilot_name: str
     start_time: datetime
     end_time: datetime
+    status: BookingStatus
+    cancelled_at: datetime | None
+
+    @field_serializer("start_time", "end_time", "cancelled_at", when_used="json")
+    def utc_timestamp(self, value: datetime | None) -> str | None:
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z") if value else None
 
 
 class BookingPage(APIModel):

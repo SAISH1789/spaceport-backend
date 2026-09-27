@@ -67,3 +67,16 @@ def client(sessions):
     with TestClient(app) as client:
         yield client
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def isolated_ship_cache(monkeypatch):
+    from app import seed
+    from app.cache import ShipCache, get_ship_cache
+    from app.main import app
+
+    cache = ShipCache(None, "disabled-test-cache")
+    app.dependency_overrides[get_ship_cache] = lambda: cache
+    monkeypatch.setattr(seed, "get_ship_cache", lambda: cache)
+    yield
+    app.dependency_overrides.pop(get_ship_cache, None)

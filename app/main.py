@@ -1,19 +1,29 @@
+from contextlib import asynccontextmanager
 from datetime import date as Date
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.cache import ShipCache, get_ship_cache
 from app.config import settings
 from app.database import get_session
 from app.models import Booking, Ship
-from app.scheduling import create_booking, operating_hours, unavailable_intervals
+from app.scheduling import cancel_booking, create_booking, operating_hours, unavailable_intervals
 from app.schemas import BookingCreate, BookingOut, BookingPage, ShipOut, Unavailability
+from app.status import BookingStatus
 
-app = FastAPI(title="Spaceport Charter API", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    get_ship_cache().close()
+
+
+app = FastAPI(title="Spaceport Charter API", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -33,8 +43,19 @@ def health(session: DB):
 
 
 @app.get("/ships", response_model=list[ShipOut], tags=["ships"])
-def list_ships(session: DB):
-    return session.scalars(select(Ship).order_by(Ship.id)).all()
+def list_ships(
+    session: DB, response: Response, cache: Annotated[ShipCache, Depends(get_ship_cache)]
+):
+    cached, key = cache.read()
+    if cached is not None:
+        response.headers["X-Cache"] = "HIT"
+        return cached
+    ships = [
+        ShipOut.model_validate(ship) for ship in session.scalars(select(Ship).order_by(Ship.id))
+    ]
+    cache.write(key, ships)
+    response.headers["X-Cache"] = "MISS" if key is not None else "BYPASS"
+    return ships
 
 
 @app.get("/ships/{ship_id}/unavailability", response_model=Unavailability, tags=["availability"])
@@ -58,15 +79,25 @@ def book(data: BookingCreate, session: DB):
     return booking
 
 
+@app.post("/bookings/{booking_id}/cancel", response_model=BookingOut, tags=["bookings"])
+def cancel(booking_id: int, session: DB):
+    with session.begin():
+        booking = cancel_booking(session, booking_id)
+    return booking
+
+
 @app.get("/bookings", response_model=BookingPage, tags=["bookings"])
 def list_bookings(
     session: DB,
     ship_id: Annotated[int | None, Query(alias="shipId", gt=0)] = None,
     date: Date | None = None,
+    status: BookingStatus | None = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ):
     filters = []
+    if status is not None:
+        filters.append(Booking.status == status)
     if ship_id is not None:
         filters.append(Booking.ship_id == ship_id)
     if date is not None:
